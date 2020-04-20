@@ -102,7 +102,7 @@ def build_decoder(opt, embeddings):
     return str2dec[dec_type].from_opt(opt, embeddings)
 
 
-def build_generator(opt, fields, output_vec_dim=-1):
+def build_generator(opt, fields, decoder, output_vec_dim=-1):
     # Build Generator.
     if not opt.copy_attn:
         if opt.generator_function == 'continuous-linear':
@@ -282,7 +282,7 @@ def build_base_model(model_opt, fields, gpu, checkpoint=None, gpu_id=None):
     model = onmt.models.NMTModel(encoder, decoder)
 
     # Generator
-    generator, mtl_generator = build_generator(model_opt, fields, output_vec_dim=output_vec_dim)
+    generator, mtl_generator = build_generator(model_opt, fields, decoder, output_vec_dim=output_vec_dim)
 
     # Load the model states from checkpoint or initialize them.
     if checkpoint is not None:
