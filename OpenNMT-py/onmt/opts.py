@@ -190,6 +190,8 @@ def model_opts(parser):
               help="lambda in the vmf computation. see loss.py")
     group.add('--center', '-center', action="store_true",
               help="Center the embeddings if using conmt losses")
+    group.add('--generator_projection', '-generator_projection', default="dot",
+               choices=['dot', 'cos'], help="What projection to use in the generator.")
     group.add('--generator_function', '-generator_function', default="softmax",
               choices=["softmax", "sparsemax", "continuous-linear", "continuous-nonlinear"],
               help="Which function to use for generating "

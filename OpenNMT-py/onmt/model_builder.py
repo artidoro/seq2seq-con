@@ -15,9 +15,11 @@ from onmt.decoders import str2dec
 
 from onmt.modules import Embeddings, VecEmbedding, CopyGenerator
 from onmt.modules.util_class import Cast
+from onmt.modules.generator import CosGenerator
 from onmt.utils.misc import use_gpu
 from onmt.utils.logging import logger
 from onmt.utils.parse import ArgumentParser
+
 
 
 def build_embeddings(opt, text_field, for_encoder=True):
@@ -120,20 +122,28 @@ def build_generator(opt, fields, output_vec_dim=-1):
                 gen_func = onmt.modules.sparse_activations.LogSparsemax(dim=-1)
             else:
                 gen_func = nn.LogSoftmax(dim=-1)
-            generator = nn.Sequential(
-                nn.Linear(opt.dec_rnn_size,
-                        len(fields["tgt"].base_field.vocab)),
-                Cast(torch.float32),
-                gen_func
-            )
-            if opt.share_decoder_embeddings:
-                generator[0].weight = decoder.embeddings.word_lut.weight
+            if opt.generator_projection == 'dot':
+                generator = nn.Sequential(
+                    nn.Linear(opt.dec_rnn_size,
+                            len(fields["tgt"].base_field.vocab)),
+                    Cast(torch.float32),
+                    gen_func
+                )
+                if opt.share_decoder_embeddings:
+                    generator[0].weight = decoder.embeddings.word_lut.weight
+            else:
+                generator = CosGenerator(opt.dec_rnn_size,
+                    len(fields["tgt"].base_field.vocab),
+                    Cast(torch.float32),
+                    gen_func,
+                    pretrained_embeddings = decoder.embeddings.word_lut.weight if opt.share_decoder_embeddings else None,
+                    fix_word_vecs_dec = opt.fix_word_vecs_dec)
     else:
         tgt_base_field = fields["tgt"].base_field
         vocab_size = len(tgt_base_field.vocab)
         pad_idx = tgt_base_field.vocab.stoi[tgt_base_field.pad_token]
         generator = CopyGenerator(opt.dec_rnn_size, vocab_size, pad_idx)
-    
+
     mtl_generator = None
     if opt.multi_task:
         if len(fields["tgt"].fields) > 1:
