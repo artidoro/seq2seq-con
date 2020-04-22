@@ -132,12 +132,13 @@ def build_generator(opt, fields, decoder, output_vec_dim=-1):
                 if opt.share_decoder_embeddings:
                     generator[0].weight = decoder.embeddings.word_lut.weight
             else:
-                generator = CosGenerator(opt.dec_rnn_size,
-                    len(fields["tgt"].base_field.vocab),
+                generator = nn.Sequential(
+                    CosGenerator(opt.dec_rnn_size,
+                        len(fields["tgt"].base_field.vocab),
+                        pretrained_embeddings = decoder.embeddings.word_lut.weight if opt.share_decoder_embeddings else None),
                     Cast(torch.float32),
-                    gen_func,
-                    pretrained_embeddings = decoder.embeddings.word_lut.weight if opt.share_decoder_embeddings else None,
-                    fix_word_vecs_dec = opt.fix_word_vecs_dec)
+                    gen_func
+                )
     else:
         tgt_base_field = fields["tgt"].base_field
         vocab_size = len(tgt_base_field.vocab)

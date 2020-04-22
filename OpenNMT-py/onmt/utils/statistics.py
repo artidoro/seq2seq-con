@@ -3,6 +3,8 @@ from __future__ import division
 import time
 import math
 import sys
+import pprint
+import numpy
 
 from onmt.utils.logging import logger
 
@@ -17,10 +19,11 @@ class Statistics(object):
     * elapsed time
     """
 
-    def __init__(self, loss=0, n_words=0, n_correct=0, n_correct_others=0):
+    def __init__(self, loss=0, n_words=0, n_correct=0, n_correct_others=0, top_k_correct=0):
         self.loss = loss
         self.n_words = n_words
         self.n_correct = n_correct
+        self.top_k_correct = top_k_correct
         self.n_src_words = 0
         self.n_correct_others = n_correct_others
         self.start_time = time.time()
@@ -83,6 +86,7 @@ class Statistics(object):
         self.n_words += stat.n_words
         self.n_correct += stat.n_correct
         self.n_correct_others += stat.n_correct_others
+        self.top_k_correct += stat.top_k_correct # numpy array of size k
 
         if update_n_src_words:
             self.n_src_words += stat.n_src_words
@@ -90,6 +94,11 @@ class Statistics(object):
     def accuracy(self):
         """ compute accuracy """
         return 100 * (self.n_correct / self.n_words)
+    
+    def accuracy_top_k(self):
+        """ compute topk accuracy """
+        return 100 * (self.top_k_correct / self.n_words)
+
     
     def other_accuracy(self):
         """ compute accuracy of the additional prediction """
@@ -120,10 +129,11 @@ class Statistics(object):
         if num_steps > 0:
             step_fmt = "%s/%5d" % (step_fmt, num_steps)
         logger.info(
-            ("Step %s; acc: %6.2f; oth_acc: %6.2f; ppl: %5.2f; xent: %4.2f; " +
+            ("Step %s; acc: %6.2f; topk_acc: %s; oth_acc: %6.2f; ppl: %5.2f; xent: %4.2f; " +
              "lr: %7.5f; %3.0f/%3.0f tok/s; %6.0f sec")
             % (step_fmt,
                self.accuracy(),
+               pprint.pformat(self.accuracy_top_k().round(decimals=2).tolist()),
                self.other_accuracy(),
                self.ppl(),
                self.xent(),

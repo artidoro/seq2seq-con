@@ -6,6 +6,7 @@ from __future__ import division
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import numpy as np
 
 import onmt
 from onmt.modules.sparse_losses import SparsemaxLoss
@@ -62,7 +63,8 @@ def build_loss_compute(model, tgt_field, opt, train=True):
             compute = NMTLossCompute(
                 criterion, loss_gen, lambda_coverage=opt.lambda_coverage,
                 lambda_align=opt.lambda_align, mtl_generator=model.mtl_generator,
-                lambda_mtl=opt.lambda_mtl)
+                lambda_mtl=opt.lambda_mtl,
+                topk_acc=opt.topk_acc)
         compute.to(device)
     
     else: #continuous loss functions
@@ -76,7 +78,8 @@ def build_loss_compute(model, tgt_field, opt, train=True):
                 lambda_coverage=opt.lambda_coverage,
                 lambda_align=opt.lambda_align,
                 lambda_vmf=opt.lambda_vmf,
-                lambda_mtl=opt.lambda_mtl)
+                lambda_mtl=opt.lambda_mtl,
+                topk_acc=opt.topk_acc)
 
     return compute
 
@@ -100,10 +103,11 @@ class LossComputeBase(nn.Module):
         normalzation (str): normalize by "sents" or "tokens"
     """
 
-    def __init__(self, criterion, generator):
+    def __init__(self, criterion, generator, topk_acc=None):
         super(LossComputeBase, self).__init__()
         self.criterion = criterion
         self.generator = generator
+        self.topk_acc = topk_acc
 
     @property
     def padding_idx(self):
@@ -195,6 +199,12 @@ class LossComputeBase(nn.Module):
         Returns:
             :obj:`onmt.utils.Statistics` : statistics for this batch.
         """
+        num_correct_k_cum = 0
+        if self.topk_acc is not None:
+            preds = torch.topk(scores, self.topk_acc, sorted=True).indices
+            num_correct_k = preds.eq(target.unsqueeze(1).expand_as(preds)) & (preds != self.padding_idx)
+            num_correct_k_cum = num_correct_k.sum(dim=0).cumsum(dim=0).cpu().numpy()
+
         pred = scores.max(1)[1]
         non_padding = target.ne(self.padding_idx)
         num_correct = pred.eq(target).masked_select(non_padding).sum().item()
@@ -205,7 +215,7 @@ class LossComputeBase(nn.Module):
             sec_pred = sec_scores.max(1)[1]
             num_correct_sec = sec_pred.eq(sec_target).masked_select(non_padding).sum().item()
 
-        return onmt.utils.Statistics(loss.item(), num_non_padding, num_correct, num_correct_sec)
+        return onmt.utils.Statistics(loss.item(), num_non_padding, num_correct, num_correct_sec, top_k_correct=num_correct_k_cum)
 
     def _bottle(self, _v):
         return _v.view(-1, _v.size(2))
@@ -250,11 +260,12 @@ class NMTLossCompute(LossComputeBase):
     """
 
     def __init__(self, criterion, generator, normalization="sents",
-                 lambda_coverage=0.0, lambda_align=0.0, mtl_generator=None, lambda_mtl=0.0):
-        super(NMTLossCompute, self).__init__(criterion, generator)
+                 lambda_coverage=0.0, lambda_align=0.0, mtl_generator=None, lambda_mtl=0.0, topk_acc=None):
+        super(NMTLossCompute, self).__init__(criterion, generator, topk_acc)
         self.lambda_coverage = lambda_coverage
         self.lambda_align = lambda_align
         self.lambda_mtl = lambda_mtl
+        self.topk_acc = topk_acc
         
         self.mtl_generator = mtl_generator
         if self.mtl_generator is not None:
@@ -371,8 +382,8 @@ class ContinuousLossCompute(LossComputeBase):
 
     def __init__(self, generator, target_embeddings, mtl_generator=None, 
                 loss_type='nllvmf', ignore_index=0, approximate_vmf=False, normalization="sents", 
-                lambda_coverage=0.0, lambda_mtl=0.0, lambda_align=0.0, lambda_vmf=0.2):
-        super(ContinuousLossCompute, self).__init__(None, generator)
+                lambda_coverage=0.0, lambda_mtl=0.0, lambda_align=0.0, lambda_vmf=0.2, topk_acc=None):
+        super(ContinuousLossCompute, self).__init__(None, generator, None)
         self.mtl_generator = mtl_generator
         self.loss_type = loss_type
         self.ignore_index = ignore_index
@@ -382,6 +393,7 @@ class ContinuousLossCompute(LossComputeBase):
         self.lambda_align = lambda_align
         self.lambda_vmf = lambda_vmf
         self.lambda_mtl = lambda_mtl
+        self.topk_acc = topk_acc
 
         if self.mtl_generator is not None:
             self.mtl_criterion = nn.NLLLoss(ignore_index=0, reduction='sum')
@@ -404,7 +416,7 @@ class ContinuousLossCompute(LossComputeBase):
         output_emb_unitnorm = torch.nn.functional.normalize(output_emb, p=2, dim=-1)
 
         cosine_loss = (1.0 - (output_emb_unitnorm * target_emb_unitnorm).sum(dim=-1)).masked_select(mask).sum()
-        # scores = output_emb_unitnorm.matmul(self.target_embeddings.weight.t())
+        scores = output_emb_unitnorm.matmul(self.target_embeddings.weight.t())
         lambda2 = 0.1
         lambda1 = 0.02
         # nll_loss = - logcmk(kappa) + kappa*(lambda2-lambda1*(out_vec_norm_t*tar_vec_norm_t).sum(dim=-1))
@@ -415,7 +427,7 @@ class ContinuousLossCompute(LossComputeBase):
         # targets.view(-1).ne(padding_token)
         loss = nll_loss.masked_select(mask).sum()
         # num_tokens = targets.ne(padding_token).float().sum()
-        return loss, cosine_loss, None  # scores
+        return loss, cosine_loss, scores
 
     def _cosine(self, output_emb, target_emb, mask):
         batch_size = output_emb.size(1)
@@ -493,6 +505,7 @@ class ContinuousLossCompute(LossComputeBase):
         gtruth = target.view(-1)
         target_emb = self.target_embeddings(gtruth)
 
+        scores = None
         if self.loss_type == 'nllvmf':
             loss, cosine_loss, scores = self._nllvmf(output_emb, target_emb, gtruth.ne(self.padding_idx))
         elif self.loss_type == 'cosine':
@@ -529,10 +542,10 @@ class ContinuousLossCompute(LossComputeBase):
             loss += align_loss
 
         # stats = self._stats(loss.clone(), cosine_loss.clone(), gtruth)
-        stats = self._stats(loss.clone(), cosine_loss.clone(), gtruth, other_task_loss_for_stats, other_scores_for_stats, other_gtruth_for_stats)
+        stats = self._stats(loss.clone(), cosine_loss.clone(), gtruth, other_task_loss_for_stats, other_scores_for_stats, other_gtruth_for_stats, scores)
         return loss, stats
     
-    def _stats(self, loss, cosine_loss, target, other_loss=None, other_scores=None, other_target=None):
+    def _stats(self, loss, cosine_loss, target, other_loss=None, other_scores=None, other_target=None, scores=None):
         """
         Args:
             loss (:obj:`FloatTensor`): the loss computed by the loss criterion.
@@ -542,6 +555,13 @@ class ContinuousLossCompute(LossComputeBase):
         Returns:
             :obj:`onmt.utils.Statistics` : statistics for this batch.
         """
+        
+        num_correct_k_cum = 0
+        if self.topk_acc is not None:
+            preds = torch.topk(scores, self.topk_acc, sorted=True).indices
+            num_correct_k = preds.eq(target.unsqueeze(1).expand_as(preds)) & (preds != self.padding_idx)
+            num_correct_k_cum = num_correct_k.sum(dim=0).cumsum(dim=0).cpu().numpy()
+
         # pred = scores.max(1)[1]
         non_padding = target.ne(self.padding_idx)
         # num_correct = pred.eq(target).masked_select(non_padding).sum().item()
@@ -553,7 +573,7 @@ class ContinuousLossCompute(LossComputeBase):
             pred_other = other_scores.max(1)[1]
             num_correct_other = pred_other.eq(other_target).masked_select(non_padding).sum().item()
 
-        return onmt.utils.Statistics(loss.item(), num_non_padding, cosine_loss.item(), num_correct_other)
+        return onmt.utils.Statistics(loss.item(), num_non_padding, cosine_loss.item(), num_correct_other, num_correct_k_cum)
 
     def _compute_coverage_loss(self, std_attn, coverage_attn):
         covloss = torch.min(std_attn, coverage_attn).sum()

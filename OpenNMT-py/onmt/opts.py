@@ -225,6 +225,8 @@ def model_opts(parser):
               choices=["O0", "O1", "O2", "O3"],
               help="For FP16 training, the opt_level to use."
                    "See https://nvidia.github.io/apex/amp.html#opt-levels.")
+    group.add('--topk_acc', '-topk_acc', type=int, default=None,
+              help='If specified chooses the topk accuracy to copute on the validation set.')
 
 
 def preprocess_opts(parser):

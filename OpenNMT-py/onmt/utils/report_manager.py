@@ -2,6 +2,8 @@
 from __future__ import print_function
 import time
 from datetime import datetime
+import pprint
+import numpy
 
 import onmt
 
@@ -139,6 +141,7 @@ class ReportMgr(ReportMgrBase):
         if train_stats is not None:
             self.log('Train perplexity: %g' % train_stats.ppl())
             self.log('Train accuracy: %g' % train_stats.accuracy())
+            self.log('Validation top k accuracy: %s' % (pprint.pformat(train_stats.accuracy_top_k().round(decimals=2).tolist())))
 
             self.maybe_log_tensorboard(train_stats,
                                        "train",
@@ -148,6 +151,7 @@ class ReportMgr(ReportMgrBase):
         if valid_stats is not None:
             self.log('Validation perplexity: %g' % valid_stats.ppl())
             self.log('Validation accuracy: %g' % valid_stats.accuracy())
+            self.log('Validation top k accuracy: %s' % (pprint.pformat(valid_stats.accuracy_top_k().round(decimals=2).tolist())))
             self.log('secondary Validation accuracy: %g' % valid_stats.other_accuracy())
 
             self.maybe_log_tensorboard(valid_stats,
