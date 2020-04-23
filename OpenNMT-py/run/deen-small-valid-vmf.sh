@@ -1,7 +1,7 @@
 source activate vivo
 #current hyperparameters have performed the best,current-300-best model is in vmf.4
 SAVEDIR='logs/deen.transformer.vmf.valid'
-export CUDA_VISIBLE_DEVICES=7
+export CUDA_VISIBLE_DEVICES=3
 mkdir -p $SAVEDIR
 python -u train.py\
     -data ~/data/deen/conmt300/data\

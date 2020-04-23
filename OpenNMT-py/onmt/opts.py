@@ -181,7 +181,7 @@ def model_opts(parser):
               help="The copy attention type to use. Leave as None to use "
                    "the same as -global_attention.")
     group.add('--loss', '-loss', default="ce",
-              choices=['ce', 'nllvmf', 'cosine', 'l2'],
+              choices=['ce', 'nllvmf', 'cosine', 'l2', 'dot', 'radial'],
               help="What loss function to use for training the model (choices:"
                    "cross entropy(ce), nllvmf, cosine")
     group.add('--approximate_vmf', '-approximate_vmf', action='store_true',
@@ -227,6 +227,9 @@ def model_opts(parser):
                    "See https://nvidia.github.io/apex/amp.html#opt-levels.")
     group.add('--topk_acc', '-topk_acc', type=int, default=None,
               help='If specified chooses the topk accuracy to copute on the validation set.')
+    group.add('--kappa', '-kappa', default='kappa-out',
+              choices=["kappa-out", "kappa-embed", "kappa-dot"],
+              help="Used with nllvmf loss, determines what is kappa.")
 
 
 def preprocess_opts(parser):

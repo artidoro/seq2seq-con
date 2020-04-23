@@ -79,7 +79,8 @@ def build_loss_compute(model, tgt_field, opt, train=True):
                 lambda_align=opt.lambda_align,
                 lambda_vmf=opt.lambda_vmf,
                 lambda_mtl=opt.lambda_mtl,
-                topk_acc=opt.topk_acc)
+                topk_acc=opt.topk_acc,
+                kappa_type=opt.kappa)
 
     return compute
 
@@ -382,18 +383,20 @@ class ContinuousLossCompute(LossComputeBase):
 
     def __init__(self, generator, target_embeddings, mtl_generator=None, 
                 loss_type='nllvmf', ignore_index=0, approximate_vmf=False, normalization="sents", 
-                lambda_coverage=0.0, lambda_mtl=0.0, lambda_align=0.0, lambda_vmf=0.2, topk_acc=None):
+                lambda_coverage=0.0, lambda_mtl=0.0, lambda_align=0.0, lambda_vmf=0.2, topk_acc=None, kappa_type=None):
         super(ContinuousLossCompute, self).__init__(None, generator, None)
         self.mtl_generator = mtl_generator
         self.loss_type = loss_type
         self.ignore_index = ignore_index
         self.target_embeddings = target_embeddings
+        self.target_embeddings_unitnorm = torch.nn.functional.normalize(self.target_embeddings.weight, p=2, dim=-1)
         self.approximate_vmf = approximate_vmf
         self.lambda_coverage = lambda_coverage
         self.lambda_align = lambda_align
         self.lambda_vmf = lambda_vmf
         self.lambda_mtl = lambda_mtl
         self.topk_acc = topk_acc
+        self.kappa_type = kappa_type
 
         if self.mtl_generator is not None:
             self.mtl_criterion = nn.NLLLoss(ignore_index=0, reduction='sum')
@@ -409,14 +412,19 @@ class ContinuousLossCompute(LossComputeBase):
             arg = torch.sqrt((v + 1) * (v + 1) + z * z)
             return arg - (v - 1) * torch.log(v - 1 + arg)
 
-        kappa = output_emb.norm(p=2, dim=-1)
+        if self.kappa_type == "kappa-out":
+            kappa = output_emb.norm(p=2, dim=-1)
+        elif self.kappa_type == "kappa-embed":
+            kappa = target_emb.norm(p=2, dim=-1)
+        elif self.kappa_type == "kappa-dot":
+            kappa = (output_emb.norm(p=2, dim=-1) * target_emb.norm(p=2, dim=-1))
         emb_size = output_emb.size(-1)
 
         target_emb_unitnorm = torch.nn.functional.normalize(target_emb, p=2, dim=-1)
         output_emb_unitnorm = torch.nn.functional.normalize(output_emb, p=2, dim=-1)
 
         cosine_loss = (1.0 - (output_emb_unitnorm * target_emb_unitnorm).sum(dim=-1)).masked_select(mask).sum()
-        scores = output_emb_unitnorm.matmul(self.target_embeddings.weight.t())
+        scores = output_emb_unitnorm.matmul(self.target_embeddings_unitnorm.t())
         lambda2 = 0.1
         lambda1 = 0.02
         # nll_loss = - logcmk(kappa) + kappa*(lambda2-lambda1*(out_vec_norm_t*tar_vec_norm_t).sum(dim=-1))
@@ -446,6 +454,34 @@ class ContinuousLossCompute(LossComputeBase):
         diff = (output_emb - target_emb)
         l2_loss = (diff * diff).sum(dim=-1).masked_select(mask).sum()
         return l2_loss, cosine_loss 
+
+    def _dot(self, output_emb, target_emb, mask):
+        # target_emb_unitnorm = torch.nn.functional.normalize(target_emb, p=2, dim=-1)
+        output_emb_norm = output_emb.norm(p=2, dim=-1)
+
+        lambda1 = self.lambda_vmf
+        dot = - (output_emb * target_emb).sum(dim=-1) + lambda1 * output_emb_norm.pow(2)
+        loss = dot.masked_select(mask).sum()
+
+        scores = output_emb.matmul(self.target_embeddings.weight.t())
+
+        return loss, scores
+
+    def _radial(self, output_emb, target_emb, mask):
+        target_emb_unitnorm = torch.nn.functional.normalize(target_emb, p=2, dim=-1)
+        output_emb_unitnorm = torch.nn.functional.normalize(output_emb, p=2, dim=-1)
+
+        target_emb_norm = target_emb.norm(p=2, dim=1)
+        output_emb_norm = output_emb.norm(p=2, dim=1)
+
+        lambda1 = self.lambda_vmf
+        loss = - (output_emb_unitnorm * target_emb_unitnorm).sum(dim=-1) + lambda1 * (target_emb_norm - output_emb_norm).pow(2)
+        loss = loss.masked_select(mask).sum()
+
+        cos = output_emb_unitnorm.matmul(self.target_embeddings_unitnorm.t())
+        scores = cos - lambda1 * (target_emb_norm - output_emb_norm).pow(2).unsqueeze(-1).expand_as(cos)
+
+        return loss, scores
 
     def _make_shard_state(self, batch, output, range_, attns=None):
         shard_state = {
@@ -506,12 +542,20 @@ class ContinuousLossCompute(LossComputeBase):
         target_emb = self.target_embeddings(gtruth)
 
         scores = None
+        cosine_loss = None
         if self.loss_type == 'nllvmf':
             loss, cosine_loss, scores = self._nllvmf(output_emb, target_emb, gtruth.ne(self.padding_idx))
         elif self.loss_type == 'cosine':
             loss, cosine_loss = self._cosine(output_emb, target_emb, gtruth.ne(self.padding_idx))
         elif self.loss_type == 'l2':
             loss, cosine_loss = self._l2(output_emb, target_emb, gtruth.ne(self.padding_idx))
+        elif self.loss_type =='dot':
+            loss, scores = self._dot(output_emb, target_emb, gtruth.ne(self.padding_idx))
+        elif self.loss_type =='radial':
+            loss, scores = self._radial(output_emb, target_emb, gtruth.ne(self.padding_idx))
+        
+        if cosine_loss == None:
+            cosine_loss = loss
         # loss = self.criterion(scores, gtruth)
 
         other_task_loss_for_stats = None
