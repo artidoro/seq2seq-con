@@ -762,6 +762,8 @@ class Translator(object):
             # norm = out.norm(p=2, dim=-1, keepdim=True)
             norm = torch.log(1 + pred_emb.norm(p=2, dim=-1, keepdim=True))
             scores = logcmk(norm) + pred_emb.matmul(tgt_out_emb.weight.t())
+        elif self.decode_loss == 'dot':
+            scores = pred_emb.matmul(tgt_out_emb.weight.t())
 
         else: # cosine and vmf work more or less the same for decoding
             pred_emb_unitnorm = torch.nn.functional.normalize(pred_emb, p=2, dim=-1)
