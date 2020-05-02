@@ -699,6 +699,21 @@ class Translator(object):
                     print(dec_out)
                 pred_emb = self.model.generator(dec_out.squeeze(0))
                 log_probs = self._emb_to_scores(pred_emb, self.model.decoder.tgt_out_emb)
+                # temp = 1e-1 
+                temp = 1e-2 
+                # import pdb; pdb.set_trace()
+                log_probs = log_probs / temp 
+                log_probs = log_probs.softmax(dim=-1)
+                calib_vals = torch.tensor([7.85789075e-06, 5.80747812e-02, 7.76397516e-02, 6.76779463e-02, 9.70724191e-02, 9.98003992e-02, 1.32118451e-01, 1.19565217e-01, 1.30434783e-01, 1.45962733e-01, 2.00680272e-01, 1.47887324e-01, 1.19601329e-01, 1.57728707e-01, 2.02020202e-01, 2.10210210e-01, 2.39608802e-01, 2.63269639e-01, 2.27951153e-01, 6.35293050e-01]).to(log_probs.device)
+                bins = np.arange(1, 20) / 20
+                bin_idxs = torch.LongTensor(np.digitize(log_probs.cpu(), bins)).to(log_probs.device)
+                bins_tensor = torch.arange(0.0, 20, ).to(log_probs.device) / 20
+                adj_vals = calib_vals - bins_tensor
+                log_probs += torch.index_select(adj_vals, 0, bin_idxs.reshape(-1)).reshape(bin_idxs.shape)
+                
+                # log_probs = (-4*(1 - log_probs)**2).exp().softmax(dim=-1).log()
+                # tkv = torch.topk(log_probs, k=100).values
+                # log_probs = (1 / (1 - log_probs)).softmax(dim=-1).log()
             else:
                 log_probs = self.model.generator(dec_out.squeeze(0))
             
