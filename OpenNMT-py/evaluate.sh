@@ -1,4 +1,4 @@
-MOSES_PATH="/projects/tir1/users/sachink/data/mosesdecoder"
+MOSES_PATH="/home/ubuntu/mosesdecoder"
 
 sed -r 's/(@@ )|(@@ ?$)//g' < $1 > $1.words
 sed -r 's/(@@ )|(@@ ?$)//g' < $2 > $2.words

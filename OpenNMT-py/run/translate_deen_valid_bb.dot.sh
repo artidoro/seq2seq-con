@@ -10,10 +10,11 @@ echo $modelname
 # for i in 2000 4000 6000 8000 10000 12000 14000 16000 18000 20000 22000 24000 26000 28000 30000 32000 34000 36000 38000 40000; do
     # -model ~/models/deen_transformer_sm_model_step_70000.pt \
 for i in 0; do
+export CUDA_VISIBLE_DEVICES=1
 python -u translate.py\
     -decode_loss dot\
     -gpu 0\
-    -model logs/deen.transformer.vmf.norm.dot/model_step_16000.pt.pt \
+    -model logs/deen.transformer.vmf.norm.dot/model_step_16000.pt \
     -src ../.data/deen/tst201516.tok.true.de\
     -output logs/$modelname/step_${i}_pred.dev.bs$BS.en\
     -batch_size 4000\
